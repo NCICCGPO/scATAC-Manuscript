@@ -8,4 +8,4 @@ The notebook "Denoising AutoEncoder Nearest Neighbor Analysis.ipynb" contains co
 
 The notebook "IterativeLSI Nearest Neighbor Analysis.ipynb" contains code for comparing the numbers of cells of the same sample vs. different samples of the same cancer type analysis using the LSI embeddings from IterativeLSI. The "matSVD_tumor.csv" with IterativeLSI embeddings for all tumor cells is available on the publication page. 
 
-The notebook "TCGA Differential to nearest neighbor Code.ipynb"
+The notebook "TCGA Immune Cells Differential to nearest neighbor Code.ipynb" contains code for the immune cell types projection analysis. The Archr objects of the cancer, healthy, and combined immune projects are available on the publication page.
