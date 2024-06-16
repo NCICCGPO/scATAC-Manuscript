@@ -5,7 +5,6 @@ Data pipeline:
   2. run `tcga().create_adata(out_file=*date.h5ad)
        *NOTE*: this can be run in create_adata_dev.ipynb dynamically
 
-Remainder of data pipeline in experiment implementation
 """
 
 
