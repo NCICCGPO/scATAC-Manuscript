@@ -25,7 +25,7 @@ import scanpy as sc
     
 class rds_csv_2_h5ad():
     def __init__(self,
-                 peak_md_filter: str = './peak_metadata_220921.csv',
+                 peak_md_filter: str = './peak_metadata.csv',
                  md_fp: str = './barcodes/', 
                  mtx_fp: str = './sparsemtx/',
                  cnv_fp: str = './TCGA/Synapse/cleaned_AWS/',):
