@@ -54,13 +54,6 @@ class rds_csv_2_h5ad():
         import pybedtools
         A = pybedtools.BedTool.from_dataframe(peak_md[['seqnames', 'start', 'end']])
         copy_nb = pd.read_csv(sample_copynb_file)
-        ######## tshoot solution to deal with NaN due to X/Y chromosome ########
-        # copy_nb = copy_nb[['Chromosome', 'Start', 'End', 'Copy_Number']].dropna(axis=0) 
-        # copy_nb['Start'] = copy_nb['Start'].astype(int) 
-        # copy_nb['End'] = copy_nb['End'].astype(int)
-        # copy_nb['Start'] = copy_nb['Start'].fillna(0).astype(int) 
-        # copy_nb['End'] = copy_nb['End'].fillna(0).astype(int)
-        ######## end addendum ########
         B = pybedtools.BedTool.from_dataframe(copy_nb[['Chromosome', 'Start', 'End', 'Copy_Number']])
         # overlap = B.intersect(A, wo=True, F=0.8).to_dataframe()
         overlap = B.intersect(A, wo=True).to_dataframe() #todo: add overlap_fraction arg after understanding what it does & how to trigger it
@@ -156,11 +149,6 @@ class rds_csv_2_h5ad():
                 peak_md_cnv = self.sample_cnv(peak_md, cnv_file)
             else:
                 peak_md_cnv = peak_md.copy()
-                # for col in ['seqnames', 'start_x', 'end_x', 
-                #                'width', 'score_x', 'replicateScoreQuantile', 
-                #                'groupScoreQuantile', 'Reproducibility', 
-                #                'copy_nb']:
-                #     peak_md_cnv[col] = None
             peak_md_cnv = peak_md_cnv.iloc[col_idx, :]
             peak_md_cnv = peak_md_cnv.reset_index()
             peak_md_cnv.index = peak_md_cnv.index.astype(str)
