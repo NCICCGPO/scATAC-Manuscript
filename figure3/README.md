@@ -1,0 +1,2 @@
+This folder contains the code to replicate the subclonal analysis presented in Figure 3. The base package used to compute the MB scale ATAC seq matrix with normalization can be found at  https://github.com/mjz1/scatools. Any queries regarding scatools can be directed to Zatzman, Matthew <zatzmanm@mskcc.org>.
+For ease of usage, we have added the file TCGA.Rmd to show an example of running the pipeline for one the GBM samples reported in Figure3. The html version of the same example can be found at https://mjz1.github.io/scatools/articles/TCGA.html.
