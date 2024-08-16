@@ -1,0 +1,426 @@
+---
+title: "TGCA Sample Vignettes"
+output: rmarkdown::html_vignette
+date: "Compiled: 2024-07-09"
+execute:
+  cache: false
+format:
+  html:
+    code-fold: false
+    code-tools: false
+    code-link: true
+    toc: true
+vignette: >
+  %\VignetteIndexEntry{TCGA}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# Setup
+
+## Load libraries
+
+
+``` r
+library(tidyverse)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(patchwork)
+library(dittoSeq)
+library(purrr)
+library(scatools)
+library(ggplotify)
+```
+
+
+## Fragment files
+
+
+``` r
+a5_frags <- "/data1/shahs3/isabl_data_lake/analyses/86/75/28675/TCGA-06-A5U0-01A-31-A615-42-X011-S07_aliquot/outs/fragments.tsv.gz"
+aa_frags <- "/data1/shahs3/isabl_data_lake/analyses/86/67/28667/TCGA-4W-AA9S-01A-22-A617-42-X015-S12_aliquot/outs/fragments.tsv.gz"
+
+cbs1 <- read.csv("/data1/shahs3/isabl_data_lake/analyses/86/75/28675/TCGA-06-A5U0-01A-31-A615-42-X011-S07_aliquot/outs/singlecell.csv")
+
+cbs2 <- read.csv("/data1/shahs3/isabl_data_lake/analyses/86/67/28667/TCGA-4W-AA9S-01A-22-A617-42-X015-S12_aliquot/outs/singlecell.csv")
+
+sample_list <- list(
+  "A5U0" = list(
+    "fragments_file" = a5_frags,
+    "cells" = cbs1$barcode[cbs1$is__cell_barcode == 1]
+  ),
+  "AA9S" = list(
+    "fragments_file" = aa_frags,
+    "cells" = cbs2$barcode[cbs2$is__cell_barcode == 1]
+  )
+)
+```
+
+## Generate bins object
+
+
+``` r
+bins <- get_tiled_bins(bs_genome = BSgenome.Hsapiens.UCSC.hg38, tilewidth = 1e7)
+```
+
+## Get blacklist
+
+
+``` r
+blacklist <- get_blacklist(genome = "hg38")
+```
+
+## Load WGS derived CNV calls
+
+
+``` r
+a5u0_wgs <- read.table(file = "/data1/shahs3/junobackup/users/mcphera1/projects/gdan_atac/from_shahab/TCGA-06-A5U0-allelic-CN.tsv", header = T, sep = "\t")
+aa9s_wgs <- read.table(file = "/data1/shahs3/junobackup/users/zatzmanm/repos/scatac_awg/R/eventual_bookdown/pt_vignettes/TCGA-4W-AA9S-allelic-CN.tsv", header = T, sep = "\t")
+
+wgs_ascn <- list(A5U0 = a5u0_wgs, AA9S = aa9s_wgs)
+```
+
+# Process with SCATools
+
+
+``` r
+sce_list <- lapply(names(sample_list), FUN = function(sample_id) {
+  cli::cli_alert_info("Running {sample_id}")
+  sce <- run_scatools(
+    sample_id = sample_id,
+    fragment_file = sample_list[[sample_id]]$fragments_file,
+    cells = sample_list[[sample_id]]$cells,
+    bins = bins,
+    blacklist = blacklist,
+    outdir = file.path("results", sample_id),
+    verbose = TRUE,
+    overwrite = FALSE,
+    segment = FALSE,
+    ncores = 16,
+    save_h5ad = FALSE
+  )
+
+  # Depth based clustering
+  sce <- cluster_seurat(sce, assay_name = "counts_gc_modal_smoothed_ratios", suffix = "_depth", resolution = 0.4, verbose = FALSE)
+  # Relevel clones
+  if (sample_id == "A5U0") {
+    sce$clusters_depth <- factor(sce$clusters_depth, levels = c(0, 1, 3, 2), labels = c("A", "B", "C", "N"))
+  }
+})
+```
+
+
+
+
+Integrate WGS derived CNV data
+
+
+``` r
+sce_list <- lapply(names(sce_list), FUN = function(sample_id) {
+  sce <- sce_list[[sample_id]]
+  # Integrate WGS derived CNV data
+  df_wgs <- wgs_ascn[[sample_id]] %>%
+    mutate(
+      total = 2 * (CN_MAJOR + CN_MINOR),
+      major = 2 * CN_MAJOR,
+      minor = 2 * CN_MINOR,
+      chr = factor(CONTIG, levels = gtools::mixedsort(unique(CONTIG)))
+    ) %>%
+    dplyr::rename("af" = "ALLELIC_FRACTION") %>%
+    mutate(
+      ai = abs(af - 0.5) / 0.5,
+      ai2 = 0.5 - abs(af - 0.5)
+    )
+
+  df_grange <- df_wgs %>%
+    makeGRangesFromDataFrame(seqnames.field = "chr", keep.extra.columns = T)
+
+  # Integrate with our scATAC data
+  int_granges <- integrate_segments(x = rowRanges(sce), y = df_grange, granges_signal_colname = c("total", "major", "minor", "af", "ai", "ai2"))
+
+  rowRanges(sce) <- int_granges
+  rownames(sce) <- rowData(sce)$ID
+  return(sce)
+})
+
+names(sce_list) <- names(sample_list)
+```
+
+# Plotting
+
+
+
+
+
+``` r
+col_clones <- function(clones) {
+  c(dittoColors()[1:length(unique(clones[clones != "N"]))], "black")
+}
+
+pls <- imap(sce_list, .f = function(sce, sample_id) {
+
+  pl_cols <- col_clones(sce$clusters)
+  names(pl_cols) <- levels(sce$clusters)
+
+  p1 <- dittoDimPlot(sce, var = "clusters", reduction.use = "UMAP") + scale_color_manual(values = pl_cols) +
+    theme(aspect.ratio = 1) +
+    labs(color = "Copy Number Cluster", title = NULL) +
+    theme(legend.position = "none")
+  rowRanges(sce)$WGS <- rowRanges(sce)$total
+
+  ht1 <- cloneCnaHeatmap(sce, assay_name = "segment_merged_logratios", clone_name = "clusters", bulk_cn_col = "WGS", col_clones = col_clones(sce$clusters), legend_name = "logr", col_fun = logr_col_fun(breaks = c(-0.6, -0.1, 0.1, 0.6), colors = c("blue", "white", "white", "red"))) %>%
+    as.ggplot()
+
+  pcomb <- p1 + ht1 + plot_layout(widths = c(3, 10))
+
+  return(pcomb)
+})
+
+names(pls) <- names(sample_list)
+```
+
+## A5U0
+
+
+``` r
+pls$A5U0
+```
+
+![](figure/a5u0-plot-1.png)
+
+## AA9S
+
+
+``` r
+pls$AA9S
+```
+
+![](figure/aa9s-plot-1.png)
+
+
+# Session Info
+
+<details>
+  <summary>**Session Info**</summary>
+
+``` r
+devtools::session_info()
+```
+
+```
+## ─ Session info ───────────────────────────────────────────────────────────────────────────────────────
+##  setting  value
+##  version  R version 4.3.2 (2023-10-31)
+##  os       Ubuntu 22.04.3 LTS
+##  system   x86_64, linux-gnu
+##  ui       RStudio
+##  language (EN)
+##  collate  en_US.UTF-8
+##  ctype    en_US.UTF-8
+##  tz       Etc/UTC
+##  date     2024-07-09
+##  rstudio  2023.12.0+369 Ocean Storm (server)
+##  pandoc   3.1.11.1 @ /data1/shahs3/users/zatzmanm/work/envs/miniforge3/bin/ (via rmarkdown)
+## 
+## ─ Packages ───────────────────────────────────────────────────────────────────────────────────────────
+##  ! package                     * version    date (UTC) lib source
+##  P abind                         1.4-5      2016-07-21 [?] RSPM
+##    AnnotationDbi                 1.64.1     2023-11-03 [1] Bioconductor
+##  P beachmat                      2.18.1     2024-02-14 [?] Bioconduc~
+##  P Biobase                     * 2.62.0     2023-10-24 [?] Bioconductor
+##    BiocFileCache                 2.10.2     2024-03-27 [1] Bioconductor 3.18 (R 4.3.2)
+##  P BiocGenerics                * 0.48.1     2023-11-01 [?] Bioconductor
+##  P BiocIO                      * 1.12.0     2023-10-24 [?] Bioconductor
+##  P BiocManager                   1.30.23    2024-05-04 [?] RSPM
+##  P BiocParallel                  1.36.0     2023-10-24 [?] Bioconductor
+##    biomaRt                       2.58.2     2024-01-30 [1] Bioconductor 3.18 (R 4.3.2)
+##  P Biostrings                  * 2.70.3     2024-03-13 [?] Bioconduc~
+##  P bit                           4.0.5      2022-11-15 [?] RSPM (R 4.3.0)
+##  P bit64                         4.0.5      2020-08-30 [?] RSPM (R 4.3.0)
+##  P bitops                        1.0-7      2021-04-24 [?] RSPM
+##  P blob                          1.2.4      2023-03-17 [?] RSPM (R 4.3.0)
+##  P BSgenome                    * 1.70.2     2024-02-08 [?] Bioconductor 3.18 (R 4.3.2)
+##  P BSgenome.Hsapiens.UCSC.hg38 * 1.4.5      2024-02-20 [?] Bioconductor
+##  P cachem                        1.1.0      2024-05-16 [?] RSPM
+##  P Cairo                         1.6-2      2023-11-28 [?] RSPM
+##  P callr                         3.7.6      2024-03-25 [?] RSPM
+##  P circlize                      0.4.16     2024-02-20 [?] RSPM
+##    cli                           3.6.3      2024-06-21 [1] RSPM (R 4.3.0)
+##  P clue                          0.3-65     2023-09-23 [?] RSPM (R 4.3.0)
+##  P cluster                       2.1.6      2023-12-01 [?] RSPM (R 4.3.0)
+##    codetools                     0.2-20     2024-03-31 [1] RSPM (R 4.3.0)
+##  P colorspace                    2.1-0      2023-01-23 [?] RSPM
+##  P ComplexHeatmap                2.18.0     2023-10-24 [?] Bioconductor
+##    confintr                      1.0.2      2023-06-04 [1] RSPM (R 4.3.0)
+##  P cowplot                       1.1.3      2024-01-22 [?] RSPM (R 4.3.0)
+##    crayon                        1.5.3      2024-06-20 [1] RSPM (R 4.3.0)
+##  P curl                          5.2.1      2024-03-01 [?] RSPM
+##  P data.table                    1.15.4     2024-03-30 [?] RSPM
+##  P DBI                           1.2.3      2024-06-02 [?] RSPM
+##    dbplyr                        2.5.0      2024-03-19 [1] RSPM (R 4.3.0)
+##  P DelayedArray                  0.28.0     2023-10-24 [?] Bioconductor
+##  P DelayedMatrixStats            1.24.0     2023-10-24 [?] Bioconductor
+##  P desc                          1.4.3      2023-12-10 [?] RSPM (R 4.3.0)
+##  P devtools                      2.4.5      2022-10-11 [?] RSPM (R 4.3.0)
+##    digest                        0.6.36     2024-06-23 [1] RSPM (R 4.3.0)
+##  P dittoSeq                    * 1.14.3     2024-03-20 [?] Bioconduc~
+##  P doParallel                    1.0.17     2022-02-07 [?] RSPM (R 4.3.0)
+##  P dplyr                       * 1.1.4      2023-11-17 [?] RSPM
+##  P dqrng                         0.4.1      2024-05-28 [?] RSPM
+##  P DropletUtils                  1.22.0     2023-10-24 [?] Bioconductor
+##  P DT                            0.33       2024-04-04 [?] RSPM
+##  P edgeR                         4.0.16     2024-02-18 [?] Bioconduc~
+##  P ellipsis                      0.3.2      2021-04-29 [?] RSPM (R 4.3.0)
+##  P evaluate                      0.24.0     2024-06-10 [?] RSPM
+##  P fansi                         1.0.6      2023-12-08 [?] RSPM
+##  P farver                        2.1.2      2024-05-13 [?] RSPM
+##  P fastmap                       1.2.0      2024-05-15 [?] RSPM
+##  P filelock                      1.0.3      2023-12-11 [?] RSPM (R 4.3.0)
+##  P forcats                     * 1.0.0      2023-01-29 [?] RSPM (R 4.3.0)
+##  P foreach                       1.5.2      2022-02-02 [?] RSPM (R 4.3.0)
+##  P fs                            1.6.4      2024-04-25 [?] RSPM
+##  P generics                      0.1.3      2022-07-05 [?] RSPM
+##  P GenomeInfoDb                * 1.38.8     2024-03-15 [?] RSPM (R 4.3.2)
+##  P GenomeInfoDbData              1.2.11     2024-02-20 [?] Bioconductor
+##  P GenomicAlignments             1.38.2     2024-01-16 [?] Bioconduc~
+##    GenomicFeatures               1.54.4     2024-03-13 [1] Bioconductor 3.18 (R 4.3.2)
+##  P GenomicRanges               * 1.54.1     2023-10-29 [?] Bioconductor
+##  P GetoptLong                    1.0.5      2020-12-15 [?] RSPM (R 4.3.0)
+##    ggplot2                     * 3.5.1      2024-04-23 [1] RSPM (R 4.3.0)
+##    ggplotify                   * 0.1.2      2023-08-09 [1] RSPM (R 4.3.0)
+##    ggpmisc                       0.6.0      2024-06-28 [1] RSPM (R 4.3.0)
+##    ggpp                          0.5.8-1    2024-07-01 [1] RSPM (R 4.3.0)
+##  P ggrepel                       0.9.5      2024-01-10 [?] RSPM
+##  P ggridges                      0.5.6      2024-01-23 [?] RSPM (R 4.3.0)
+##  P GlobalOptions                 0.1.2      2020-06-10 [?] RSPM (R 4.3.0)
+##  P glue                          1.7.0      2024-01-09 [?] RSPM
+##  P gridExtra                     2.3        2017-09-09 [?] RSPM
+##    gridGraphics                  0.5-1      2020-12-13 [1] RSPM (R 4.3.0)
+##  P gtable                        0.3.5      2024-04-22 [?] RSPM
+##  P gtools                        3.9.5      2023-11-20 [?] RSPM (R 4.3.0)
+##  P HDF5Array                     1.30.1     2024-02-14 [?] Bioconductor 3.18 (R 4.3.2)
+##  P highr                         0.11       2024-05-26 [?] RSPM
+##  P hms                           1.1.3      2023-03-21 [?] RSPM (R 4.3.0)
+##  P htmltools                     0.5.8.1    2024-04-04 [?] RSPM
+##  P htmlwidgets                   1.6.4      2023-12-06 [?] RSPM (R 4.3.0)
+##  P httpuv                        1.6.15     2024-03-26 [?] RSPM
+##  P httr                          1.4.7      2023-08-15 [?] RSPM (R 4.3.0)
+##  P IRanges                     * 2.36.0     2023-10-24 [?] Bioconductor
+##  P iterators                     1.0.14     2022-02-05 [?] RSPM (R 4.3.0)
+##  P janitor                       2.2.0      2023-02-02 [?] RSPM (R 4.3.0)
+##  P jsonlite                      1.8.8      2023-12-04 [?] RSPM
+##    KEGGREST                      1.42.0     2023-10-24 [1] Bioconductor
+##    knitr                         1.48       2024-07-07 [1] RSPM (R 4.3.0)
+##  P labeling                      0.4.3      2023-08-29 [?] RSPM
+##  P later                         1.3.2      2023-12-06 [?] RSPM (R 4.3.0)
+##    lattice                       0.22-6     2024-03-20 [1] RSPM (R 4.3.0)
+##  P lifecycle                     1.0.4      2023-11-07 [?] RSPM
+##  P limma                         3.58.1     2023-10-31 [?] Bioconductor
+##    locfit                        1.5-9.10   2024-06-24 [1] RSPM (R 4.3.0)
+##  P logger                        0.3.0      2024-03-05 [?] RSPM
+##  P lubridate                   * 1.9.3      2023-09-27 [?] RSPM (R 4.3.0)
+##  P magrittr                      2.0.3      2022-03-30 [?] RSPM
+##  P MASS                          7.3-60     2023-05-04 [?] CRAN (R 4.3.2)
+##  P Matrix                        1.6-5      2024-01-11 [?] RSPM (R 4.3.0)
+##  P MatrixGenerics              * 1.14.0     2023-10-24 [?] Bioconductor
+##  P MatrixModels                  0.5-3      2023-11-06 [?] RSPM (R 4.3.0)
+##  P matrixStats                 * 1.3.0      2024-04-11 [?] RSPM
+##  P memoise                       2.0.1      2021-11-26 [?] RSPM (R 4.3.0)
+##    mgcv                          1.9-1      2023-12-21 [1] RSPM (R 4.3.0)
+##  P mime                          0.12       2021-09-28 [?] RSPM (R 4.3.0)
+##  P miniUI                        0.1.1.1    2018-05-18 [?] RSPM (R 4.3.0)
+##  P munsell                       0.5.1      2024-04-01 [?] RSPM
+##    nlme                          3.1-165    2024-06-06 [1] RSPM (R 4.3.0)
+##  P patchwork                   * 1.2.0      2024-01-08 [?] RSPM
+##  P pbmcapply                     1.5.1      2022-04-28 [?] RSPM (R 4.3.0)
+##  P pheatmap                      1.0.12     2019-01-04 [?] RSPM
+##  P pillar                        1.9.0      2023-03-22 [?] RSPM
+##  P pkgbuild                      1.4.4      2024-03-17 [?] RSPM (R 4.3.0)
+##  P pkgconfig                     2.0.3      2019-09-22 [?] RSPM
+##  P pkgdown                       2.1.0      2024-07-06 [?] RSPM
+##  P pkgload                       1.3.4      2024-01-16 [?] RSPM (R 4.3.0)
+##  P png                           0.1-8      2022-11-29 [?] RSPM
+##  P polynom                       1.4-1      2022-04-11 [?] RSPM (R 4.3.0)
+##  P prettyunits                   1.2.0      2023-09-24 [?] RSPM (R 4.3.0)
+##  P processx                      3.8.4      2024-03-16 [?] RSPM
+##  P profvis                       0.3.8      2023-05-02 [?] RSPM (R 4.3.0)
+##  P progress                      1.2.3      2023-12-06 [?] RSPM (R 4.3.0)
+##  P promises                      1.3.0      2024-04-05 [?] RSPM
+##  P ps                            1.7.6      2024-01-18 [?] RSPM (R 4.3.0)
+##  P purrr                       * 1.0.2      2023-08-10 [?] RSPM
+##  P quantreg                      5.98       2024-05-26 [?] RSPM
+##  P quarto                        1.4        2024-03-06 [?] RSPM
+##  P R.cache                       0.16.0     2022-07-21 [?] RSPM (R 4.3.0)
+##  P R.methodsS3                   1.8.2      2022-06-13 [?] RSPM (R 4.3.0)
+##  P R.oo                          1.26.0     2024-01-24 [?] RSPM (R 4.3.0)
+##  P R.utils                       2.12.3     2023-11-18 [?] RSPM (R 4.3.0)
+##  P R6                            2.5.1      2021-08-19 [?] RSPM
+##  P rappdirs                      0.3.3      2021-01-31 [?] RSPM (R 4.3.0)
+##  P RColorBrewer                  1.1-3      2022-04-03 [?] RSPM
+##  P Rcpp                          1.0.12     2024-01-09 [?] RSPM
+##  P RCurl                         1.98-1.14  2024-01-09 [?] RSPM
+##  P readr                       * 2.1.5      2024-01-10 [?] RSPM (R 4.3.0)
+##  P remotes                       2.5.0      2024-03-17 [?] RSPM (R 4.3.0)
+##  P renv                          1.0.7.9000 2024-07-09 [?] Github (rstudio/renv@4f911df)
+##  P restfulr                      0.0.15     2022-06-16 [?] RSPM
+##  P rhdf5                         2.46.1     2023-11-29 [?] Bioconductor 3.18 (R 4.3.2)
+##  P rhdf5filters                  1.14.1     2023-11-06 [?] Bioconductor
+##  P Rhdf5lib                      1.24.2     2024-02-07 [?] Bioconductor 3.18 (R 4.3.2)
+##  P rjson                         0.2.21     2022-01-09 [?] RSPM
+##  P rlang                         1.1.4      2024-06-04 [?] RSPM
+##  P rmarkdown                     2.27       2024-05-17 [?] RSPM
+##  P rprojroot                     2.0.4      2023-11-05 [?] RSPM (R 4.3.0)
+##  P Rsamtools                     2.18.0     2023-10-24 [?] Bioconductor
+##  P RSQLite                       2.3.7      2024-05-27 [?] RSPM
+##  P rstudioapi                    0.16.0     2024-03-24 [?] RSPM
+##    rtracklayer                 * 1.62.0     2023-10-24 [1] Bioconductor
+##  P S4Arrays                      1.2.1      2024-03-04 [?] Bioconduc~
+##  P S4Vectors                   * 0.40.2     2023-11-23 [?] Bioconduc~
+##  P scales                        1.3.0      2023-11-28 [?] RSPM
+##    scatools                    * 0.1.1.9000 2024-07-09 [1] Github (mjz1/scatools@bd8df13)
+##  P scuttle                       1.12.0     2023-10-24 [?] Bioconductor
+##  P sessioninfo                   1.2.2      2021-12-06 [?] RSPM (R 4.3.0)
+##  P shape                         1.4.6.1    2024-02-23 [?] RSPM
+##  P shiny                         1.8.1.1    2024-04-02 [?] RSPM
+##  P SingleCellExperiment        * 1.24.0     2023-10-24 [?] Bioconductor
+##  P snakecase                     0.11.1     2023-08-27 [?] RSPM (R 4.3.0)
+##  P SparseArray                   1.2.4      2024-02-11 [?] Bioconduc~
+##    SparseM                       1.84       2024-06-25 [1] RSPM (R 4.3.0)
+##  P sparseMatrixStats             1.14.0     2023-10-24 [?] Bioconductor
+##  P statmod                       1.5.0      2023-01-06 [?] RSPM
+##  P stringi                       1.8.4      2024-05-06 [?] RSPM
+##  P stringr                     * 1.5.1      2023-11-14 [?] RSPM
+##  P styler                        1.10.3     2024-04-07 [?] RSPM
+##    SummarizedExperiment        * 1.32.0     2023-10-24 [1] Bioconductor
+##    survival                      3.7-0      2024-06-05 [1] RSPM (R 4.3.0)
+##  P tibble                      * 3.2.1      2023-03-20 [?] RSPM
+##  P tidyr                       * 1.3.1      2024-01-24 [?] RSPM
+##  P tidyselect                    1.2.1      2024-03-11 [?] RSPM
+##    tidyverse                   * 2.0.0      2023-02-22 [1] RSPM (R 4.3.0)
+##  P timechange                    0.3.0      2024-01-18 [?] RSPM (R 4.3.0)
+##  P tzdb                          0.4.0      2023-05-12 [?] RSPM (R 4.3.0)
+##  P urlchecker                    1.0.1      2021-11-30 [?] RSPM (R 4.3.0)
+##  P usethis                       2.2.3      2024-02-19 [?] RSPM
+##  P utf8                          1.2.4      2023-10-22 [?] RSPM
+##  P vctrs                         0.6.5      2023-12-01 [?] RSPM
+##  P viridisLite                   0.4.2      2023-05-02 [?] RSPM
+##  P vroom                         1.6.5      2023-12-05 [?] RSPM (R 4.3.0)
+##  P whisker                       0.4.1      2022-12-05 [?] RSPM (R 4.3.0)
+##  P withr                         3.0.0      2024-01-16 [?] RSPM
+##    xfun                          0.45       2024-06-16 [1] RSPM (R 4.3.0)
+##    XML                           3.99-0.17  2024-06-25 [1] RSPM (R 4.3.0)
+##  P xml2                          1.3.6      2023-12-04 [?] RSPM (R 4.3.0)
+##  P xtable                        1.8-4      2019-04-21 [?] RSPM (R 4.3.0)
+##  P XVector                     * 0.42.0     2023-10-24 [?] Bioconductor
+##    yaml                          2.3.9      2024-07-05 [1] RSPM (R 4.3.0)
+##    yulab.utils                   0.1.4      2024-01-28 [1] RSPM (R 4.3.0)
+##  P zlibbioc                      1.48.2     2024-03-13 [?] Bioconduc~
+## 
+##  [1] /data1/shahs3/users/zatzmanm/work/.cache/R/renv/library/scatools-34e0c720/linux-ubuntu-jammy/R-4.3/x86_64-pc-linux-gnu
+##  [2] /data1/shahs3/users/zatzmanm/work/.cache/R/renv/sandbox/linux-ubuntu-jammy/R-4.3/x86_64-pc-linux-gnu/25ebdc09
+## 
+##  P ── Loaded and on-disk path mismatch.
+## 
+## ──────────────────────────────────────────────────────────────────────────────────────────────────────
+```
+</details>
+
