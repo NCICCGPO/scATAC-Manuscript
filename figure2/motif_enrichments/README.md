@@ -1,0 +1,1 @@
+The file " " contains the code for running motif enrichment for the individual BRCA and pan-cancer samples. The enrichment test works on the neural network models trained on the individual BRCA samples or the per-cancer type peaks. It works on the probability of a motif instance getting prioritized for each sample against all other samples.
