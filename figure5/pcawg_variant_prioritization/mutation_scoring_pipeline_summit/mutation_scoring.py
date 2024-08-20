@@ -2,13 +2,46 @@ import sys
 import pandas as pd
 from seq2atac.stable import one_hot_encode, write_pickle, read_pickle
 from seq2atac.stable.models import model_name_to_fn
-from seq2atac.analysis.enrichment_utils import get_alt_sequence
 from pybedtools import BedTool
 from pyfaidx import Fasta
 import numpy as np
-from pyfaidx import Fasta
 from tqdm import tqdm
 from copy import deepcopy
+
+fasta_file = './fasta_hg38.fa' ## TODO: add fasta file path
+
+def get_alt_sequence(df,input_width,fasta_seq):
+    
+    alt_seqs = []
+    peak_seqs = []
+    
+    for idx,row in df.iterrows():
+        
+        chm,peakstart,peakend=row["peak_chr"],row["peak_start"],row["peak_end"]
+        ref,alt = row["Reference_Allele"], row["Tumor_Seq_Allele2"]
+        
+        peaksize = peakend - peakstart
+        flank = (input_width - peaksize)//2
+        peakstart = peakstart - flank
+        peakend = peakstart + input_width
+    
+        peak_seq = str(fasta_seq[chm][peakstart:peakend])
+        
+        point = row["hg38_start"]
+        dist_from_start = point - peakstart
+        
+        assert peak_seq[dist_from_start] == ref
+        
+        alt_seq = list(peak_seq)
+        alt_seq[dist_from_start] = alt
+        alt_seq = "".join(alt_seq)
+        
+        alt_seqs.append(alt_seq)
+        peak_seqs.append(peak_seq)
+        
+    return peak_seqs, alt_seqs
+
+
 
 def main(mutations_file,model_type,model_file,outfile):
 
@@ -19,7 +52,6 @@ def main(mutations_file,model_type,model_file,outfile):
     print("outfile: ",outfile)
 
     ### get fasta file
-    fasta_file = '/illumina/scratch/deep_learning/lsundaram/singlecelldatasets/TCGA/GRCh38_no_alt_analysis_set_GCA_000001405.15.fasta'
     fasta_seq=Fasta(fasta_file)
 
     ### load model
@@ -55,23 +87,11 @@ def main(mutations_file,model_type,model_file,outfile):
         pred_ref = model.predict(X_ref,batch_size=128)
         pred_alt = model.predict(X_alt,batch_size=128)
 
-        if model_type in ["conv_phylop_seq2seq_1364","conv_phylop_seq2seq_big_1364","motifnet"]:
-            df_preds.loc[X_batch,"proba_ref"] = pred_ref[0].ravel()
-            df_preds.loc[X_batch,"proba_alt"] = pred_alt[0].ravel()
-            ref_phylops.append(pred_ref[1])
-            alt_phylops.append(pred_alt[1])
-
-        else:
-            df_preds.loc[X_batch,f"proba_ref"] = pred_ref.ravel()
-            df_preds.loc[X_batch,f"proba_alt"] = pred_alt.ravel()
+        df_preds.loc[X_batch,f"proba_ref"] = pred_ref.ravel()
+        df_preds.loc[X_batch,f"proba_alt"] = pred_alt.ravel()
 
     # df_preds.to_csv(outfile)
     write_pickle(df_preds,outfile)
-    if model_type in ["conv_phylop_seq2seq_1364","conv_phylop_seq2seq_big_1364","motifnet"]:
-        ref_phylops = np.concatenate(ref_phylops)
-        alt_phylops = np.concatenate(alt_phylops)
-        np.save(f"{outfile}.ref_phylops.npy",ref_phylops)
-        np.save(f"{outfile}.alt_phylops.npy",alt_phylops)
 
 import sys
 if __name__=="__main__":

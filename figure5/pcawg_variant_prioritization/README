@@ -1,0 +1,9 @@
+Scoring variants using models 
+
+mutation_scoring_pipeline/ is for scoring variants in a mutation-centered fashion
+Input dataframe must contain: "Chromosome","hg38_start","hg38_end","Reference_Allele","Tumor_Seq_Allele2","mutation_id"
+
+mutation_scoring_pipeline_summit/ is for scoring variants in a summit-centered fashion
+Input dataframe must contain: "Chromosome","hg38_start","hg38_end","Reference_Allele","Tumor_Seq_Allele2","mutation_id", "peak_chr" "peak_start","peak_end"
+
+Please replace the lines marked with TODO in each file to specifiy experiment directory, model directories mutation directories and fasta files

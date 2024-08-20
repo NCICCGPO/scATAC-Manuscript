@@ -10,6 +10,43 @@ from pyfaidx import Fasta
 from tqdm import tqdm
 from copy import deepcopy
 
+fasta_file = './fasta_hg38.fa' ## TODO: add fasta file path
+
+def get_refalt_sequence(df,input_width,fasta_seq):
+    ref_seqs = []
+    alt_seqs = []
+    
+    for idx,row in df.iterrows():
+
+        chrom,pos,ref,alt = row["Chromosome"], int(row["hg38_start"]), row["Reference_Allele"], row["Tumor_Seq_Allele2"]
+        
+        ### given: chrom, position, ref, alt, 
+        ## get (2,input_width,4) => one with reference, one with alt
+
+        half = input_width//2
+        left = int(pos - half)
+        right = int(pos + half)
+
+        seq1 = str(fasta_seq[chrom][left:right])
+        
+        assert len(seq1) == input_width
+        assert seq1[half] == ref
+
+        seq2 = list(deepcopy(seq1))
+        seq2[half]= alt
+        seq2 = "".join(seq2)
+
+        ## make sure the regions other than half-point is same
+        assert seq1[0:half] == seq2[0:half]
+        assert seq1[half+1:] == seq2[half+1:]
+
+        ref_seqs.append(seq1)
+        alt_seqs.append(seq2)
+    
+    return ref_seqs,alt_seqs
+
+
+
 def main(mutations_file,model_type,model_file,outfile):
 
     print("Arguments")
@@ -19,7 +56,6 @@ def main(mutations_file,model_type,model_file,outfile):
     print("outfile: ",outfile)
 
     ### get fasta file
-    fasta_file = '/illumina/scratch/deep_learning/lsundaram/singlecelldatasets/TCGA/GRCh38_no_alt_analysis_set_GCA_000001405.15.fasta'
     fasta_seq=Fasta(fasta_file)
 
     ### load model
@@ -54,16 +90,8 @@ def main(mutations_file,model_type,model_file,outfile):
         pred_ref = model.predict(X_ref,batch_size=128)
         pred_alt = model.predict(X_alt,batch_size=128)
 
-        if model_type in ["conv_phylop_seq2seq_1364","conv_phylop_seq2seq_big_1364"]:
-            df_preds.loc[X_batch,"proba_ref"] = pred_ref[0].ravel()
-            df_preds.loc[X_batch,"proba_alt"] = pred_alt[0].ravel()
-            df_preds.loc[X_batch,"phylop_ref"] = pred_ref[1].tolist()
-            df_preds.loc[X_batch,"phylop_alt"] = pred_alt[1].tolist()
-
-        else:
-
-            df_preds.loc[X_batch,f"proba_ref"] = pred_ref.ravel()
-            df_preds.loc[X_batch,f"proba_alt"] = pred_alt.ravel()
+        df_preds.loc[X_batch,f"proba_ref"] = pred_ref.ravel()
+        df_preds.loc[X_batch,f"proba_alt"] = pred_alt.ravel()
 
     # df_preds.to_csv(outfile)
     write_pickle(df_preds,outfile)

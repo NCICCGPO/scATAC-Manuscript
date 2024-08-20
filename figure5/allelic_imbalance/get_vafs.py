@@ -1,12 +1,8 @@
 import pandas as pd
 import pysam
 import glob
-import warnings
 import numpy as np
-import matplotlib as plt
 import argparse
-
-
 
 def get_vaf(rec, bamfile):
     region = rec['chrom'] + ":" + str(rec['pos']) + "-" + str(rec['pos'])
@@ -33,7 +29,7 @@ args = parser.parse_args()
 case_id = args.case_id
 print(case_id)
 
-all_files = glob.glob("/illumina/scratch/deep_learning/asalcedo/ATAC_snv_beds/snv_cancer_peak_overlap_all_samples/TCGA-*overlap.txt", recursive=True)
+all_files = glob.glob("./snv_cancer_peak_overlap_all_samples/TCGA-*overlap.txt", recursive=True) ### TODO: point to correct path with CaVEMan
 snv_file_df = pd.DataFrame({'region_file':all_files})
 snv_file_df['case_id'] = snv_file_df['region_file'].str.extract(".*/(TCGA-.*?)\.")
 
@@ -48,12 +44,10 @@ for snv_file in snv_file_df.loc[snv_file_df['case_id'] == case_id,'region_file']
 
 snv_df = snv_df[snv_df['var_id'].isin(common_snv)]
 
-# atac_ss = pd.read_csv("/illumina-isi07/scratch/DeepLearning/asalcedo/gdc_sample_sheet.2023-03-14.tsv", sep="\t")
-# atac_ss = pd.read_csv("/illumina-isi07/scratch/DeepLearning/asalcedo/gdc_sample_sheet_ATAC_samples.txt", sep="\t")
-atac_ss = pd.read_csv('/illumina/scratch/deep_learning/asalcedo/scATAC/190101_Samples_For_scATAC.csv', sep=",")
+atac_ss = pd.read_csv('190101_Samples_For_scATAC.csv', sep=",") ## TODO: point to correct path
 atac_ss['uuid'] = atac_ss['UUID_SampleName Prefix'].str.replace("-","_")
 
-scATAC_files = glob.glob("/illumina/scratch/deep_learning/lsundaram/singlecelldatasets/TCGA/scATAC_BAMS/*.bam", recursive=False)
+scATAC_files = glob.glob("path to scatac bams/*.bam", recursive=False) ### TODO: path to scATAC bams
 bam_file_df = pd.DataFrame({'bam_file':scATAC_files})
 bam_file_df['UUID'] = bam_file_df['bam_file'].str.extract(".*/scATAC_(.*?)_X0")
 bam_file_df2 = pd.merge(bam_file_df, atac_ss, left_on="UUID", right_on="uuid")
@@ -63,7 +57,7 @@ atac_vafs = snv_df.apply(lambda x: get_vaf(x, atac_bamfile), axis=1, result_type
 atac_vafs.columns = ['region','ref','alt', 'atac_vaf','atac_dp']
 
 if args.use_wgs:
-    wgs_bamfiles = glob.glob("/illumina-isi07/scratch/DeepLearning/asalcedo/WGS_bam_slices/*/*.bam", recursive=True)
+    wgs_bamfiles = glob.glob("path to bams /*.bam", recursive=True) ## TODO: paths to wgs bams
     wgs_bam_df = pd.DataFrame({'file':wgs_bamfiles})
     wgs_bam_df['case_id'] = wgs_bam_df['file'].str.extract("/(TCGA.*?).bam")
     wgs_bamfile = wgs_bam_df.loc[wgs_bam_df['case_id']== case_id,'file'].values[0]
