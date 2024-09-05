@@ -9,3 +9,5 @@ Folder "motif_enrichments" contains the code for performing motif enrichment ana
 The code "create_cancerspecific_peaks.R" contains the R code for calling peaks in only cancer cells per cancer types
 
 The code "TCGA Footprint comparison & plotting.ipynb" contains the code for plotting the footprints of the cleaned motif instances in individual BRCA samples as illustrated in Figure 2E.
+
+The file "negative_sampling_model_training_250_1364_fig2.tsv" is available as part of the publication page for selecting negative training regions for seq2atac model training.
