@@ -1,11 +1,4 @@
-"""
-Data pipeline:
-  1. run `rds2_mtx_csv.ipynb` which takes all rds data files and outputs to 
-       scipy.sparse mtx files and stores cellular metadata 
-  2. run `tcga().create_adata(out_file=*date.h5ad)
-       *NOTE*: this can be run in create_adata_dev.ipynb dynamically
 
-"""
 
 
 import os

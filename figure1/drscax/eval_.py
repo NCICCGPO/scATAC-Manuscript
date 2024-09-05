@@ -1,6 +1,3 @@
-"""
-Assume that the model state dict is properly loaded
-"""
 
 
 import os
