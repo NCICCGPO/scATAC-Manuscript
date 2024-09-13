@@ -28,7 +28,7 @@ parser = ArgumentParser()
 parser.add_argument("--snp_file")
 parser.add_argument("--peak_file")
 parser.add_argument("--chrom")
-parser.add_argument("--dir", default="/illumina/scratch/deep_learning/asalcedo/scATAC/sum_stats_ld_expanded_bed/")
+parser.add_argument("--dir", default="sum_stats_ld_expanded_bed/")
 
 args = parser.parse_args()
 in_chrom= args.chrom
@@ -42,7 +42,7 @@ peakset = re.sub("(^[A-Z]*?)_","", peakfile_base)
 peakset = peakset.replace(".bed","")
 
 #LD expansion is based on topmed LD tables
-topmed_dir='/illumina/scratch/deep_learning/asalcedo/scATAC/topmed_ld/'
+topmed_dir='topmed_ld/'
 ss_df = pd.read_csv(args.snp_file, sep="\t")
 
 
